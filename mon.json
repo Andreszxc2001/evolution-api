@@ -1,0 +1,43 @@
+{
+  "event": "messages.upsert",
+  "instance": "API WHATSAPP",
+  "data": {
+    "key": {
+      "remoteJid": "573006018593@s.whatsapp.net",
+      "remoteJidAlt": "573006018593@s.whatsapp.net",
+      "fromMe": true,
+      "id": "3EB036ADED54E2A979F792",
+      "participant": "",
+      "addressingMode": "lid"
+    },
+    "pushName": "Arnaldo Pushaina",
+    "status": "SERVER_ACK",
+    "message": {
+      "conversation": "picha"
+    },
+    "contextInfo": {
+      "mentionedJid": [],
+      "groupMentions": [],
+      "statusAttributions": [],
+      "ephemeralSettingTimestamp": {
+        "low": 1781530616,
+        "high": 0,
+        "unsigned": false
+      },
+      "disappearingMode": {
+        "initiator": 0,
+        "trigger": 1,
+        "initiatedByMe": true
+      }
+    },
+    "messageType": "conversation",
+    "messageTimestamp": 1781566216,
+    "instanceId": "a8be7429-c06b-47fb-9636-bf694be82a99",
+    "source": "web"
+  },
+  "destination": "https://f90f8f00-43a8-49cd-a39b-cf90fce7697f.webhooksite.net",
+  "date_time": "2026-06-15T20:30:16.355Z",
+  "sender": "573019441676@s.whatsapp.net",
+  "server_url": "https://evolution-api-2ytd.onrender.com",
+  "apikey": "2AE059D6046F-4E68-8EFD-79D86D8E9073"
+}
