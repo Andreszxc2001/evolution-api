@@ -26,7 +26,7 @@ export const evolutionBotSchema: JSONSchema7 = {
   properties: {
     enabled: { type: 'boolean' },
     description: { type: 'string' },
-    apiUrl: { type: 'string' },
+    apiUrl: { type: 'string', format: 'uri', pattern: '^https?://\\S+$' },
     apiKey: { type: 'string' },
     triggerType: { type: 'string', enum: ['all', 'keyword', 'none', 'advanced'] },
     triggerOperator: { type: 'string', enum: ['equals', 'contains', 'startsWith', 'endsWith', 'regex'] },

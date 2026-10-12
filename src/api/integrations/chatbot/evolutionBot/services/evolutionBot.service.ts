@@ -4,6 +4,7 @@ import { WAMonitoringService } from '@api/services/monitor.service';
 import { Integration } from '@api/types/wa.types';
 import { ConfigService, HttpServer } from '@config/env.config';
 import { EvolutionBot, EvolutionBotSetting, IntegrationSession } from '@prisma/client';
+import { describeRemoteHttpError } from '@utils/httpErrorDiagnostics';
 import { sendTelemetry } from '@utils/sendTelemetry';
 import axios from 'axios';
 import { isURL } from 'class-validator';
@@ -102,7 +103,18 @@ export class EvolutionBotService extends BaseChatbotService<EvolutionBot, Evolut
       const endpoint = bot.apiUrl;
 
       if (!endpoint) {
-        this.logger.error('No Evolution Bot endpoint defined');
+        this.logger.error(
+          `[EvolutionBot] No endpoint (apiUrl) configured for bot "${bot.id}" on instance "${instance.instanceName}". ` +
+            `Configure a valid bot URL before using this integration.`,
+        );
+        return;
+      }
+
+      if (!isURL(endpoint, { require_tld: false })) {
+        this.logger.error(
+          `[EvolutionBot] Invalid apiUrl "${endpoint}" configured for bot "${bot.id}" on instance "${instance.instanceName}". ` +
+            `The url must be an absolute http(s) endpoint of the bot service.`,
+        );
         return;
       }
 
@@ -117,18 +129,18 @@ export class EvolutionBotService extends BaseChatbotService<EvolutionBot, Evolut
         };
       }
 
-      // Sanitize payload for logging (remove sensitive data)
-      const sanitizedPayload = {
-        ...payload,
-        inputs: {
-          ...payload.inputs,
-          apiKey: payload.inputs.apiKey ? '[REDACTED]' : undefined,
-        },
-      };
-
-      const response = await axios.post(endpoint, payload, {
-        headers,
-      });
+      let response: any;
+      try {
+        response = await axios.post(endpoint, payload, {
+          headers,
+        });
+      } catch (error) {
+        this.logHttpRequestError('POST', endpoint, error, instance, bot, msg);
+        if (instance.integration === Integration.WHATSAPP_BAILEYS) {
+          await instance.client.sendPresenceUpdate('paused', remoteJid).catch(() => undefined);
+        }
+        return;
+      }
 
       if (instance.integration === Integration.WHATSAPP_BAILEYS) {
         await instance.client.sendPresenceUpdate('paused', remoteJid);
@@ -160,5 +172,29 @@ export class EvolutionBotService extends BaseChatbotService<EvolutionBot, Evolut
       this.logger.error(`Error in sendMessageToBot: ${error.message || JSON.stringify(error)}`);
       return;
     }
+  }
+
+  /**
+   * Logs a failed HTTP request to the Evolution Bot without leaking credentials.
+   * Distinguishes configuration errors (404/401/403) from network failures so the
+   * actual cause can be identified from the logs.
+   */
+  private logHttpRequestError(
+    method: string,
+    url: string,
+    error: any,
+    instance: any,
+    bot: EvolutionBot,
+    msg?: any,
+  ): void {
+    const instanceName = instance?.instanceName ?? '-';
+    const messageId = msg?.key?.id ?? '-';
+    const remoteJid = msg?.key?.remoteJid ?? '-';
+
+    const base =
+      `[EvolutionBot] HTTP request failed: method=${method} url=${url} ` +
+      `instance=${instanceName} bot=${bot?.id ?? '-'} messageId=${messageId} remoteJid=${remoteJid}`;
+
+    this.logger.error(`${base} ${describeRemoteHttpError(error)}`);
   }
 }

@@ -1478,7 +1478,6 @@ export class BaileysStartupService extends ChannelStartupService {
           if (messageRaw.key.remoteJid?.includes('@lid') && messageRaw.key.remoteJidAlt) {
             messageRaw.key.remoteJid = messageRaw.key.remoteJidAlt;
           }
-          console.log(messageRaw);
 
           this.sendDataWebhook(Events.MESSAGES_UPSERT, messageRaw);
 
@@ -1513,7 +1512,9 @@ export class BaileysStartupService extends ChannelStartupService {
             await saveOnWhatsappCache([
               {
                 remoteJid:
-                  messageRaw.key.addressingMode === 'lid' ? messageRaw.key.remoteJidAlt : messageRaw.key.remoteJid,
+                  messageRaw.key.addressingMode === 'lid' && messageRaw.key.remoteJidAlt
+                    ? messageRaw.key.remoteJidAlt
+                    : messageRaw.key.remoteJid,
                 remoteJidAlt: messageRaw.key.remoteJidAlt,
                 lid: messageRaw.key.addressingMode === 'lid' ? 'lid' : null,
               },

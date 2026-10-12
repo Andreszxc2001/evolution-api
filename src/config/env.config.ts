@@ -334,6 +334,7 @@ export type Dify = { ENABLED: boolean };
 export type N8n = { ENABLED: boolean };
 export type Evoai = { ENABLED: boolean };
 export type Flowise = { ENABLED: boolean };
+export type EvolutionBot = { ENABLED: boolean };
 
 export type S3 = {
   ACCESS_KEY: string;
@@ -418,6 +419,7 @@ export interface Env {
   N8N: N8n;
   EVOAI: Evoai;
   FLOWISE: Flowise;
+  EVOLUTION_BOT: EvolutionBot;
   CACHE: CacheConf;
   S3?: S3;
   AUTHENTICATION: Auth;
@@ -838,6 +840,9 @@ export class ConfigService {
       },
       FLOWISE: {
         ENABLED: process.env?.FLOWISE_ENABLED === 'true',
+      },
+      EVOLUTION_BOT: {
+        ENABLED: process.env?.EVOLUTION_BOT_ENABLED === 'true',
       },
       CACHE: {
         REDIS: {
