@@ -58,15 +58,9 @@ export class BaileysController {
     return instance.baileysGetAuthState();
   }
 
-  public async fetchNewsletters({ instanceName }: InstanceDto) {
-    const instance = this.waMonitor.waInstances[instanceName];
-
-    return instance.fetchNewsletters();
-  }
-
   public async fetchNewsletterMessages({ instanceName }: InstanceDto, body: any) {
     const instance = this.waMonitor.waInstances[instanceName];
 
-    return instance.fetchNewsletterMessages(body?.jid, body?.count, body?.since, body?.after);
+    return instance.fetchNewsletterMessages(body?.inviteUrl, body?.count, body?.since, body?.after);
   }
 }

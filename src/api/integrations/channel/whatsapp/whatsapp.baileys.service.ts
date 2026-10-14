@@ -253,7 +253,6 @@ export class BaileysStartupService extends ChannelStartupService {
   private endSession = false;
   private logBaileys = this.configService.get<Log>('LOG').BAILEYS;
   private eventProcessingQueue: Promise<void> = Promise.resolve();
-  private readonly newsletterJids = new Set<string>();
 
   // Cache TTL constants (in seconds)
   private readonly MESSAGE_CACHE_TTL_SECONDS = 5 * 60; // 5 minutes - avoid duplicate message processing
@@ -753,8 +752,6 @@ export class BaileysStartupService extends ChannelStartupService {
 
   private readonly chatHandle = {
     'chats.upsert': async (chats: Chat[]) => {
-      chats.filter((chat) => isJidNewsletter(chat.id)).forEach((chat) => this.newsletterJids.add(chat.id));
-
       const existingChatIds = await this.prismaRepository.chat.findMany({
         where: { instanceId: this.instanceId },
         select: { remoteJid: true },
@@ -945,8 +942,6 @@ export class BaileysStartupService extends ChannelStartupService {
       syncType?: proto.HistorySync.HistorySyncType;
     }) => {
       try {
-        chats.filter((chat) => isJidNewsletter(chat.id)).forEach((chat) => this.newsletterJids.add(chat.id));
-
         if (syncType === proto.HistorySync.HistorySyncType.ON_DEMAND) {
           console.log('received on-demand history sync, messages=', messages);
         }
@@ -3986,35 +3981,34 @@ export class BaileysStartupService extends ChannelStartupService {
     }
   }
 
-  public async fetchNewsletters() {
-    if (!this.client?.user) {
-      throw new BadRequestException('WhatsApp instance is not connected');
-    }
-
-    return Promise.all(
-      (await this.getNewsletterJids()).map(async (jid) => {
-        const metadata = await this.client.newsletterMetadata('jid', jid);
-        return metadata ?? { id: jid, name: jid };
-      }),
-    );
-  }
-
   public async fetchNewsletterMessages(
-    jid: string,
+    inviteUrl: string,
     count = 20,
     since = 0,
     after = 0,
   ): Promise<{
+    newsletter: { id: string; name: string; description?: string };
     messages: { id: string; timestamp: number; text: string; image?: { mimetype: string; base64: string } }[];
   }> {
     if (!this.client?.user) {
       throw new BadRequestException('WhatsApp instance is not connected');
     }
-    if (!isJidNewsletter(jid)) {
-      throw new BadRequestException('A valid WhatsApp Channel JID is required');
+
+    let inviteCode: string;
+    try {
+      const url = new URL(inviteUrl);
+      const inviteMatch = url.pathname.match(/^\/channel\/([A-Za-z0-9]+)\/?$/);
+      if (url.protocol !== 'https:' || !['whatsapp.com', 'www.whatsapp.com'].includes(url.hostname) || !inviteMatch) {
+        throw new Error('Invalid channel invitation URL');
+      }
+      inviteCode = inviteMatch[1];
+    } catch {
+      throw new BadRequestException('inviteUrl must be a valid https://whatsapp.com/channel/... link');
     }
-    if (!(await this.getNewsletterJids()).includes(jid)) {
-      throw new NotFoundException('WhatsApp Channel not found in this account');
+
+    const newsletter = await this.client.newsletterMetadata('invite', inviteCode);
+    if (!newsletter || !isJidNewsletter(newsletter.id)) {
+      throw new NotFoundException('WhatsApp Channel not found for the invitation link');
     }
     if (!Number.isInteger(count) || count < 1 || count > 100) {
       throw new BadRequestException('count must be an integer between 1 and 100');
@@ -4023,7 +4017,7 @@ export class BaileysStartupService extends ChannelStartupService {
       throw new BadRequestException('since and after must be non-negative integers');
     }
 
-    const response = await this.client.newsletterFetchMessages(jid, count, since, after);
+    const response = await this.client.newsletterFetchMessages(newsletter.id, count, since, after);
     const updates = getBinaryNodeChild(response, 'message_updates') ?? response;
     const messageNodes = getBinaryNodeChildren(updates, 'message');
     const messages: {
@@ -4047,7 +4041,7 @@ export class BaileysStartupService extends ChannelStartupService {
       }
 
       const message = proto.WebMessageInfo.fromObject({
-        key: { remoteJid: jid, id, fromMe: false },
+        key: { remoteJid: newsletter.id, id, fromMe: false },
         message: content,
         messageTimestamp: Number(node.attrs.t) || 0,
       });
@@ -4075,18 +4069,10 @@ export class BaileysStartupService extends ChannelStartupService {
       messages.push(result);
     }
 
-    return { messages };
-  }
-
-  private async getNewsletterJids(): Promise<string[]> {
-    const savedChannels = await this.prismaRepository.chat.findMany({
-      where: { instanceId: this.instanceId, remoteJid: { endsWith: '@newsletter' } },
-      select: { remoteJid: true },
-    });
-    const channelJids = new Set(savedChannels.map((channel) => channel.remoteJid));
-    this.newsletterJids.forEach((jid) => channelJids.add(jid));
-
-    return [...channelJids];
+    return {
+      newsletter: { id: newsletter.id, name: newsletter.name, description: newsletter.description },
+      messages,
+    };
   }
 
   public async fetchPrivacySettings() {

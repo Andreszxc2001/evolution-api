@@ -99,16 +99,6 @@ export class BaileysRouter extends RouterBroker {
 
         res.status(HttpStatus.OK).json(response);
       })
-      .post(this.routerPath('fetchNewsletters'), ...guards, async (req, res) => {
-        const response = await this.dataValidate<InstanceDto>({
-          request: req,
-          schema: instanceSchema,
-          ClassRef: InstanceDto,
-          execute: (instance) => baileysController.fetchNewsletters(instance),
-        });
-
-        res.status(HttpStatus.OK).json(response);
-      })
       .post(this.routerPath('fetchNewsletterMessages'), ...guards, async (req, res) => {
         const response = await this.dataValidate<InstanceDto>({
           request: req,
