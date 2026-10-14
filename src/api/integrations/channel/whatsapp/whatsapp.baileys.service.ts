@@ -106,6 +106,8 @@ import makeWASocket, {
   downloadMediaMessage,
   generateWAMessageFromContent,
   getAggregateVotesInPollMessage,
+  getBinaryNodeChild,
+  getBinaryNodeChildren,
   GetCatalogOptions,
   getContentType,
   getDevice,
@@ -251,6 +253,7 @@ export class BaileysStartupService extends ChannelStartupService {
   private endSession = false;
   private logBaileys = this.configService.get<Log>('LOG').BAILEYS;
   private eventProcessingQueue: Promise<void> = Promise.resolve();
+  private readonly newsletterJids = new Set<string>();
 
   // Cache TTL constants (in seconds)
   private readonly MESSAGE_CACHE_TTL_SECONDS = 5 * 60; // 5 minutes - avoid duplicate message processing
@@ -750,6 +753,8 @@ export class BaileysStartupService extends ChannelStartupService {
 
   private readonly chatHandle = {
     'chats.upsert': async (chats: Chat[]) => {
+      chats.filter((chat) => isJidNewsletter(chat.id)).forEach((chat) => this.newsletterJids.add(chat.id));
+
       const existingChatIds = await this.prismaRepository.chat.findMany({
         where: { instanceId: this.instanceId },
         select: { remoteJid: true },
@@ -940,6 +945,8 @@ export class BaileysStartupService extends ChannelStartupService {
       syncType?: proto.HistorySync.HistorySyncType;
     }) => {
       try {
+        chats.filter((chat) => isJidNewsletter(chat.id)).forEach((chat) => this.newsletterJids.add(chat.id));
+
         if (syncType === proto.HistorySync.HistorySyncType.ON_DEMAND) {
           console.log('received on-demand history sync, messages=', messages);
         }
@@ -3977,6 +3984,109 @@ export class BaileysStartupService extends ChannelStartupService {
       this.logger.error(error);
       throw new BadRequestException(error.toString());
     }
+  }
+
+  public async fetchNewsletters() {
+    if (!this.client?.user) {
+      throw new BadRequestException('WhatsApp instance is not connected');
+    }
+
+    return Promise.all(
+      (await this.getNewsletterJids()).map(async (jid) => {
+        const metadata = await this.client.newsletterMetadata('jid', jid);
+        return metadata ?? { id: jid, name: jid };
+      }),
+    );
+  }
+
+  public async fetchNewsletterMessages(
+    jid: string,
+    count = 20,
+    since = 0,
+    after = 0,
+  ): Promise<{
+    messages: { id: string; timestamp: number; text: string; image?: { mimetype: string; base64: string } }[];
+  }> {
+    if (!this.client?.user) {
+      throw new BadRequestException('WhatsApp instance is not connected');
+    }
+    if (!isJidNewsletter(jid)) {
+      throw new BadRequestException('A valid WhatsApp Channel JID is required');
+    }
+    if (!(await this.getNewsletterJids()).includes(jid)) {
+      throw new NotFoundException('WhatsApp Channel not found in this account');
+    }
+    if (!Number.isInteger(count) || count < 1 || count > 100) {
+      throw new BadRequestException('count must be an integer between 1 and 100');
+    }
+    if (!Number.isInteger(since) || since < 0 || !Number.isInteger(after) || after < 0) {
+      throw new BadRequestException('since and after must be non-negative integers');
+    }
+
+    const response = await this.client.newsletterFetchMessages(jid, count, since, after);
+    const updates = getBinaryNodeChild(response, 'message_updates') ?? response;
+    const messageNodes = getBinaryNodeChildren(updates, 'message');
+    const messages: {
+      id: string;
+      timestamp: number;
+      text: string;
+      image?: { mimetype: string; base64: string };
+    }[] = [];
+
+    for (const node of messageNodes) {
+      const plaintext = getBinaryNodeChild(node, 'plaintext')?.content;
+      if (!plaintext || Array.isArray(plaintext)) {
+        continue;
+      }
+
+      const contentBytes = typeof plaintext === 'string' ? Buffer.from(plaintext, 'binary') : plaintext;
+      const content = proto.Message.decode(contentBytes);
+      const id = node.attrs.message_id || node.attrs.server_id;
+      if (!id) {
+        continue;
+      }
+
+      const message = proto.WebMessageInfo.fromObject({
+        key: { remoteJid: jid, id, fromMe: false },
+        message: content,
+        messageTimestamp: Number(node.attrs.t) || 0,
+      });
+      const text = content.conversation || content.extendedTextMessage?.text || content.imageMessage?.caption || '';
+      const imageMessage = content.imageMessage;
+
+      if (!text && !imageMessage) {
+        continue;
+      }
+
+      const result: (typeof messages)[number] = {
+        id,
+        timestamp: Number(node.attrs.t) || 0,
+        text,
+      };
+
+      if (imageMessage) {
+        const media = await this.getBase64FromMediaMessage({ message }, true);
+        if (!media) {
+          throw new BadRequestException(`Could not download image from channel message ${id}`);
+        }
+        result.image = { mimetype: media.mimetype, base64: media.base64 };
+      }
+
+      messages.push(result);
+    }
+
+    return { messages };
+  }
+
+  private async getNewsletterJids(): Promise<string[]> {
+    const savedChannels = await this.prismaRepository.chat.findMany({
+      where: { instanceId: this.instanceId, remoteJid: { endsWith: '@newsletter' } },
+      select: { remoteJid: true },
+    });
+    const channelJids = new Set(savedChannels.map((channel) => channel.remoteJid));
+    this.newsletterJids.forEach((jid) => channelJids.add(jid));
+
+    return [...channelJids];
   }
 
   public async fetchPrivacySettings() {
