@@ -4029,22 +4029,36 @@ export class BaileysStartupService extends ChannelStartupService {
 
     for (const node of messageNodes) {
       const plaintext = getBinaryNodeChild(node, 'plaintext')?.content;
-      if (!plaintext || Array.isArray(plaintext)) {
+      let message: proto.WebMessageInfo;
+
+      if (plaintext && !Array.isArray(plaintext)) {
+        const contentBytes = typeof plaintext === 'string' ? Buffer.from(plaintext, 'binary') : plaintext;
+        message = proto.WebMessageInfo.fromObject({
+          key: {
+            remoteJid: newsletter.id,
+            id: node.attrs.message_id || node.attrs.server_id,
+            fromMe: false,
+          },
+          message: proto.Message.decode(contentBytes),
+          messageTimestamp: Number(node.attrs.t) || 0,
+        });
+      } else if (node.content && !Array.isArray(node.content) && typeof node.content !== 'string') {
+        message = proto.WebMessageInfo.decode(node.content);
+      } else {
         continue;
       }
 
-      const contentBytes = typeof plaintext === 'string' ? Buffer.from(plaintext, 'binary') : plaintext;
-      const content = proto.Message.decode(contentBytes);
-      const id = node.attrs.message_id || node.attrs.server_id;
+      const id = message.key?.id || node.attrs.message_id || node.attrs.server_id;
       if (!id) {
         continue;
       }
 
-      const message = proto.WebMessageInfo.fromObject({
-        key: { remoteJid: newsletter.id, id, fromMe: false },
-        message: content,
-        messageTimestamp: Number(node.attrs.t) || 0,
-      });
+      message.key = { ...message.key, remoteJid: newsletter.id, id, fromMe: false };
+      const content = message.message;
+      if (!content) {
+        continue;
+      }
+
       const text = content.conversation || content.extendedTextMessage?.text || content.imageMessage?.caption || '';
       const imageMessage = content.imageMessage;
 
@@ -4054,7 +4068,7 @@ export class BaileysStartupService extends ChannelStartupService {
 
       const result: (typeof messages)[number] = {
         id,
-        timestamp: Number(node.attrs.t) || 0,
+        timestamp: Number(message.messageTimestamp || node.attrs.t) || 0,
         text,
       };
 
