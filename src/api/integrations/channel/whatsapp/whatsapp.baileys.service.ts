@@ -107,7 +107,6 @@ import makeWASocket, {
   generateWAMessageFromContent,
   getAggregateVotesInPollMessage,
   getBinaryNodeChild,
-  getBinaryNodeChildren,
   GetCatalogOptions,
   getContentType,
   getDevice,
@@ -4019,13 +4018,40 @@ export class BaileysStartupService extends ChannelStartupService {
     }
 
     const response = await this.client.newsletterFetchMessages(newsletter.id, count, since, after);
-    const updates = getBinaryNodeChild(response, 'message_updates') ?? response;
-    const messageNodes = getBinaryNodeChildren(updates, 'message');
+
+    const messageNodes: any[] = [];
+    const buscarNodosMensaje = (valor: any) => {
+      if (!valor) return;
+      if (Array.isArray(valor)) {
+        for (const item of valor) buscarNodosMensaje(item);
+        return;
+      }
+      if (typeof valor !== 'object') return;
+      if (valor.tag === 'message' && valor.attrs) {
+        messageNodes.push(valor);
+        return;
+      }
+      buscarNodosMensaje(valor.content);
+    };
+    buscarNodosMensaje(response);
+
+    let vistaRespuesta: string | null = null;
+    try {
+      vistaRespuesta =
+        JSON.stringify(response, (_k, v) => {
+          if (Buffer.isBuffer(v)) return `buffer:${v.length}`;
+          if (typeof v === 'bigint') return v.toString();
+          return v;
+        })?.slice(0, 800) ?? null;
+    } catch {
+      vistaRespuesta = null;
+    }
 
     const debug = {
+      responseTipo: Array.isArray(response) ? 'array' : typeof response,
       responseTag: (response as any)?.tag ?? null,
-      updatesTag: (updates as any)?.tag ?? null,
-      children: ((updates as any)?.content ?? []).map((n: any) => n?.tag),
+      responseKeys: response && typeof response === 'object' ? Object.keys(response).slice(0, 10) : [],
+      responseVista: vistaRespuesta,
       messageNodes: messageNodes.length,
     };
     if (!messageNodes.length) {
