@@ -3989,6 +3989,7 @@ export class BaileysStartupService extends ChannelStartupService {
   ): Promise<{
     newsletter: { id: string; name: string; description?: string };
     messages: { id: string; timestamp: number; text: string; image?: { mimetype: string; base64: string } }[];
+    debug: Record<string, any>;
   }> {
     if (!this.client?.user) {
       throw new BadRequestException('WhatsApp instance is not connected');
@@ -4020,12 +4021,41 @@ export class BaileysStartupService extends ChannelStartupService {
     const response = await this.client.newsletterFetchMessages(newsletter.id, count, since, after);
     const updates = getBinaryNodeChild(response, 'message_updates') ?? response;
     const messageNodes = getBinaryNodeChildren(updates, 'message');
+
+    const debug = {
+      responseTag: (response as any)?.tag ?? null,
+      updatesTag: (updates as any)?.tag ?? null,
+      children: ((updates as any)?.content ?? []).map((n: any) => n?.tag),
+      messageNodes: messageNodes.length,
+    };
+    if (!messageNodes.length) {
+      this.logger.warn(`fetchNewsletterMessages: 0 nodos para ${newsletter.id} ${JSON.stringify(debug)}`);
+    }
+
     const messages: {
       id: string;
       timestamp: number;
       text: string;
       image?: { mimetype: string; base64: string };
     }[] = [];
+
+    const buffersFromNode = (nodo: any): Buffer[] => {
+      const salida: Buffer[] = [];
+      const visitar = (v: any) => {
+        if (!v) return;
+        if (Buffer.isBuffer(v)) {
+          salida.push(v);
+          return;
+        }
+        if (Array.isArray(v)) {
+          for (const item of v) visitar(item);
+          return;
+        }
+        if (typeof v === 'object') visitar(v.content);
+      };
+      visitar(nodo?.content);
+      return salida;
+    };
 
     for (const node of messageNodes) {
       const plaintext = getBinaryNodeChild(node, 'plaintext')?.content;
@@ -4042,10 +4072,18 @@ export class BaileysStartupService extends ChannelStartupService {
           message: proto.Message.decode(contentBytes),
           messageTimestamp: Number(node.attrs.t) || 0,
         });
-      } else if (node.content && !Array.isArray(node.content) && typeof node.content !== 'string') {
-        message = proto.WebMessageInfo.decode(node.content);
       } else {
-        continue;
+        let decodificado: proto.WebMessageInfo | null = null;
+        for (const buffer of buffersFromNode(node)) {
+          try {
+            decodificado = proto.WebMessageInfo.decode(buffer);
+            break;
+          } catch {
+            // probar el siguiente buffer
+          }
+        }
+        if (!decodificado) continue;
+        message = decodificado;
       }
 
       const id = message.key?.id || node.attrs.message_id || node.attrs.server_id;
@@ -4086,6 +4124,7 @@ export class BaileysStartupService extends ChannelStartupService {
     return {
       newsletter: { id: newsletter.id, name: newsletter.name, description: newsletter.description },
       messages,
+      debug,
     };
   }
 
