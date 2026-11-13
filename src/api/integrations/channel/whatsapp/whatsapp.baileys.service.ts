@@ -124,6 +124,7 @@ import makeWASocket, {
   prepareWAMessageMedia,
   Product,
   proto,
+  S_WHATSAPP_NET,
   UserFacingSocketConfig,
   WABrowserDescription,
   WAMediaUpload,
@@ -4017,8 +4018,6 @@ export class BaileysStartupService extends ChannelStartupService {
       throw new BadRequestException('since and after must be non-negative integers');
     }
 
-    const response = await this.client.newsletterFetchMessages(newsletter.id, count, since, after);
-
     const messageNodes: any[] = [];
     const buscarNodosMensaje = (valor: any) => {
       if (!valor) return;
@@ -4033,7 +4032,62 @@ export class BaileysStartupService extends ChannelStartupService {
       }
       buscarNodosMensaje(valor.content);
     };
-    buscarNodosMensaje(response);
+
+    const intentos: { via: string; ejecutar: () => Promise<any> }[] = [
+      {
+        via: 'newsletterFetchMessages',
+        ejecutar: () => this.client.newsletterFetchMessages(newsletter.id, count, since, after),
+      },
+      {
+        via: 'iq-messages-invite',
+        ejecutar: () =>
+          this.client.query({
+            tag: 'iq',
+            attrs: { type: 'get', xmlns: 'newsletter', to: S_WHATSAPP_NET },
+            content: [
+              {
+                tag: 'messages',
+                attrs: {
+                  type: 'invite',
+                  jid: newsletter.id,
+                  count: String(count),
+                  since: String(since),
+                  after: String(after),
+                },
+              },
+            ],
+          }),
+      },
+      {
+        via: 'iq-message-updates',
+        ejecutar: () =>
+          this.client.query({
+            tag: 'iq',
+            attrs: { type: 'get', xmlns: 'newsletter', to: newsletter.id },
+            content: [
+              {
+                tag: 'message_updates',
+                attrs: { count: String(count), since: String(since), after: String(after) },
+              },
+            ],
+          }),
+      },
+    ];
+
+    let response: any;
+    let via = '';
+    for (const intento of intentos) {
+      try {
+        const salida = await intento.ejecutar();
+        via = intento.via;
+        response = salida;
+        messageNodes.length = 0;
+        buscarNodosMensaje(salida);
+        if (messageNodes.length) break;
+      } catch (error) {
+        this.logger.warn(`fetchNewsletterMessages: intento ${intento.via} fallo: ${error}`);
+      }
+    }
 
     let vistaRespuesta: string | null = null;
     try {
@@ -4048,6 +4102,7 @@ export class BaileysStartupService extends ChannelStartupService {
     }
 
     const debug = {
+      via,
       responseTipo: Array.isArray(response) ? 'array' : typeof response,
       responseTag: (response as any)?.tag ?? null,
       responseKeys: response && typeof response === 'object' ? Object.keys(response).slice(0, 10) : [],
